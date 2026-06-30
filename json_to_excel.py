@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 DEFAULT_INPUT = Path("outputs/detections.json")
 DEFAULT_OUTPUT_DIR = Path("result")
-DEFAULT_OUTPUT_NAME = "detections.xlsx"
+LATEST_OUTPUT_NAME = "detections_latest.xlsx"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,24 +35,52 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-name",
-        default=DEFAULT_OUTPUT_NAME,
-        help="Output Excel file name. Default: detections.xlsx",
+        default=None,
+        help="Optional exact Excel file name. If omitted, creates a timestamped file and detections_latest.xlsx.",
     )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    input_path = Path(args.input)
-    output_dir = Path(args.output_dir)
-    output_path = output_dir / args.output_name
+    result = export_excel_report(
+        input_path=Path(args.input),
+        output_dir=Path(args.output_dir),
+        output_name=args.output_name,
+    )
+    print(f"Wrote Excel report: {result['report_path']}")
+    if result.get("latest_path"):
+        print(f"Updated latest Excel report: {result['latest_path']}")
+    return 0
 
+
+def export_excel_report(
+    *,
+    input_path: Path = DEFAULT_INPUT,
+    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    output_name: str | None = None,
+) -> dict[str, Path | None]:
     data = load_json(input_path)
     workbook = build_workbook(data)
     output_dir.mkdir(parents=True, exist_ok=True)
-    workbook.save(output_path)
-    print(f"Wrote Excel report: {output_path}")
-    return 0
+
+    report_path = output_dir / (output_name or timestamped_output_name())
+    workbook.save(report_path)
+
+    latest_path: Path | None = None
+    if output_name is None:
+        latest_path = output_dir / LATEST_OUTPUT_NAME
+        try:
+            shutil.copyfile(report_path, latest_path)
+        except PermissionError:
+            latest_path = None
+
+    return {"report_path": report_path, "latest_path": latest_path}
+
+
+def timestamped_output_name() -> str:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"detections_{stamp}.xlsx"
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -75,8 +104,6 @@ def build_workbook(data: dict[str, Any]) -> Workbook:
     summary_sheet = workbook.create_sheet("Summary")
     add_summary_sheet(summary_sheet, data, detections)
     add_bottle_details_sheet(workbook, detections)
-    add_detections_sheet(workbook, detections)
-    add_defects_sheet(workbook, detections)
 
     for sheet in workbook.worksheets:
         sheet.sheet_view.rightToLeft = True
@@ -112,9 +139,6 @@ def add_full_report_sheet(sheet: Any, data: dict[str, Any], detections: list[dic
         "عدد العيوب",
         "العيوب بالتفصيل",
         "ملخص العلبة",
-        "رقم الفريم",
-        "الوقت بالثواني",
-        "مسار صورة العلبة",
     ]
     sheet.append(details_headers)
     details_header_row = sheet.max_row
@@ -126,9 +150,6 @@ def add_full_report_sheet(sheet: Any, data: dict[str, Any], detections: list[dic
                 len(defects),
                 format_defects_for_bottle(defects),
                 item.get("summary_ar", ""),
-                item.get("frame_index", ""),
-                item.get("timestamp_sec", ""),
-                item.get("crop_path", ""),
             ]
         )
     add_table(
@@ -169,9 +190,6 @@ def add_bottle_details_sheet(workbook: Workbook, detections: list[dict[str, Any]
         "عدد العيوب",
         "العيوب بالتفصيل",
         "ملخص العلبة",
-        "رقم الفريم",
-        "الوقت بالثواني",
-        "مسار صورة العلبة",
     ]
     sheet.append(headers)
     for item in detections:
@@ -182,72 +200,9 @@ def add_bottle_details_sheet(workbook: Workbook, detections: list[dict[str, Any]
                 len(defects),
                 format_defects_for_bottle(defects),
                 item.get("summary_ar", ""),
-                item.get("frame_index", ""),
-                item.get("timestamp_sec", ""),
-                item.get("crop_path", ""),
             ]
         )
     add_table(sheet, "BottleDetailsTable")
-
-
-def add_detections_sheet(workbook: Workbook, detections: list[dict[str, Any]]) -> None:
-    sheet = workbook.create_sheet("Detections")
-    headers = [
-        "Sequence",
-        "Frame Index",
-        "Timestamp Sec",
-        "Crop Path",
-        "Summary AR",
-        "Defect Types",
-        "Defect Labels AR",
-        "Defect Descriptions AR",
-    ]
-    sheet.append(headers)
-    for item in detections:
-        defects = item.get("defects", [])
-        sheet.append(
-            [
-                item.get("sequence", ""),
-                item.get("frame_index", ""),
-                item.get("timestamp_sec", ""),
-                item.get("crop_path", ""),
-                item.get("summary_ar", ""),
-                join_values(defect.get("type", "") for defect in defects),
-                join_values(defect.get("label_ar", "") for defect in defects),
-                join_values(defect.get("description_ar", "") for defect in defects),
-            ]
-        )
-    add_table(sheet, "DetectionsTable")
-
-
-def add_defects_sheet(workbook: Workbook, detections: list[dict[str, Any]]) -> None:
-    sheet = workbook.create_sheet("Defects")
-    headers = [
-        "Sequence",
-        "Defect Type",
-        "Label AR",
-        "Description AR",
-        "Frame Index",
-        "Timestamp Sec",
-        "Crop Path",
-    ]
-    sheet.append(headers)
-    for item in detections:
-        for defect in item.get("defects", []):
-            sheet.append(
-                [
-                    item.get("sequence", ""),
-                    defect.get("type", ""),
-                    defect.get("label_ar", ""),
-                    defect.get("description_ar", ""),
-                    item.get("frame_index", ""),
-                    item.get("timestamp_sec", ""),
-                    item.get("crop_path", ""),
-                ]
-            )
-    if sheet.max_row == 1:
-        sheet.append(["", "", "", "No defects were found.", "", "", ""])
-    add_table(sheet, "DefectsTable")
 
 
 def add_table(
@@ -291,7 +246,7 @@ def apply_common_styles(sheet: Any) -> None:
             cell.border = border
             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
-    sheet.freeze_panes = "A2" if sheet.title != "Report" else "A14"
+    sheet.freeze_panes = "A2" if sheet.title != "Report" else "A11"
     auto_size_columns(sheet)
 
 
@@ -318,10 +273,6 @@ def auto_size_columns(sheet: Any) -> None:
             value = "" if cell.value is None else str(cell.value)
             max_length = max(max_length, len(value))
         sheet.column_dimensions[column_letter].width = min(max(max_length + 3, 12), 60)
-
-
-def join_values(values: Any) -> str:
-    return " | ".join(str(value) for value in values if value not in (None, ""))
 
 
 def format_defects_for_bottle(defects: list[dict[str, Any]]) -> str:

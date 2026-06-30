@@ -4,11 +4,15 @@ import os
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from threading import Event
+from typing import Any, Callable
 
 import cv2
 
+from json_to_excel import export_excel_report
+
 from .ai import AnalyzerProtocol, AnthropicBottleAnalyzer, NoAiAnalyzer
+from .cameras import open_camera
 from .config import AppConfig
 from .exporter import write_run_output
 from .models import DetectionResult
@@ -21,18 +25,41 @@ class PendingAnalysis:
     future: Future[DetectionResult]
 
 
-def run_detector(config: AppConfig) -> list[DetectionResult]:
-    config.output_path.parent.mkdir(parents=True, exist_ok=True)
-    config.crops_dir.mkdir(parents=True, exist_ok=True)
+ProgressCallback = Callable[[dict[str, Any]], None]
+PreviewCallback = Callable[[Any], None]
+
+
+def run_detector(
+    config: AppConfig,
+    *,
+    stop_event: Event | None = None,
+    preview_callback: PreviewCallback | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> list[DetectionResult]:
+    output_path = config.resolved_output_path
+    crops_dir = config.resolved_crops_dir
+    result_dir = config.resolved_result_dir
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    crops_dir.mkdir(parents=True, exist_ok=True)
+    result_dir.mkdir(parents=True, exist_ok=True)
+    emit_progress(
+        progress_callback,
+        event="started",
+        source=config.source,
+        output_path=str(output_path),
+        result_dir=str(result_dir),
+    )
 
     analyzer: AnalyzerProtocol
     analyzer = AnthropicBottleAnalyzer(config) if config.use_ai else NoAiAnalyzer()
 
-    capture = cv2.VideoCapture(config.parsed_source)
+    parsed_source = config.parsed_source
+    capture = open_camera(parsed_source) if isinstance(parsed_source, int) else cv2.VideoCapture(parsed_source)
     if not capture.isOpened():
         raise RuntimeError(f"Could not open source: {config.source}")
 
-    if isinstance(config.parsed_source, int):
+    if isinstance(parsed_source, int):
         if config.camera_width:
             capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.camera_width)
         if config.camera_height:
@@ -59,6 +86,10 @@ def run_detector(config: AppConfig) -> list[DetectionResult]:
     try:
         frame_index = 0
         while True:
+            if stop_event is not None and stop_event.is_set():
+                stop_requested = True
+                break
+
             ok, frame = capture.read()
             if not ok:
                 break
@@ -81,9 +112,16 @@ def run_detector(config: AppConfig) -> list[DetectionResult]:
                 track.sequence = sequence
                 track.analysis_state = "pending"
                 crop = crop_with_padding(frame, track.bbox, padding=0.18)
-                crop_path = config.crops_dir / f"bottle_{sequence:04d}.jpg"
+                crop_path = crops_dir / f"bottle_{sequence:04d}.jpg"
                 cv2.imwrite(str(crop_path), crop)
                 timestamp_sec = get_timestamp_sec(capture, frame_index, fps)
+                emit_progress(
+                    progress_callback,
+                    event="captured",
+                    sequence=sequence,
+                    frame_index=frame_index,
+                    crop_path=str(crop_path),
+                )
                 pending.append(
                     PendingAnalysis(
                         sequence=sequence,
@@ -99,8 +137,15 @@ def run_detector(config: AppConfig) -> list[DetectionResult]:
                 )
 
             collect_finished(pending, detections, tracker)
+            emit_progress(
+                progress_callback,
+                event="progress",
+                captured_count=sequence,
+                completed_count=len(detections),
+                pending_count=len(pending),
+            )
 
-            if display_enabled:
+            if display_enabled or preview_callback is not None:
                 preview = draw_preview(
                     frame=frame,
                     tracks=tracks,
@@ -110,6 +155,8 @@ def run_detector(config: AppConfig) -> list[DetectionResult]:
                     capture_start=config.capture_start,
                     capture_end=config.capture_end,
                 )
+                emit_preview(preview_callback, preview)
+            if display_enabled:
                 cv2.imshow(window_name, preview)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
@@ -126,12 +173,21 @@ def run_detector(config: AppConfig) -> list[DetectionResult]:
         output = write_run_output(
             source=config.source,
             model=analyzer.model,
-            output_path=config.output_path,
+            output_path=output_path,
             detections=detections,
         )
+        excel_result = export_excel_report(input_path=output_path, output_dir=result_dir)
+        emit_progress(
+            progress_callback,
+            event="finished",
+            detections_count=len(output.detections),
+            output_path=str(output_path),
+            report_path=str(excel_result["report_path"]),
+            latest_path=str(excel_result["latest_path"]) if excel_result["latest_path"] else None,
+        )
         print(
-            f"Wrote {len(output.detections)} detections to {config.output_path} "
-            f"and crops to {config.crops_dir}"
+            f"Wrote {len(output.detections)} detections to {output_path}, "
+            f"crops to {crops_dir}, and Excel to {excel_result['report_path']}"
         )
         return output.detections
     finally:
@@ -139,6 +195,24 @@ def run_detector(config: AppConfig) -> list[DetectionResult]:
         capture.release()
         if display_enabled:
             cv2.destroyAllWindows()
+
+
+def emit_progress(callback: ProgressCallback | None, **payload: Any) -> None:
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception:
+        pass
+
+
+def emit_preview(callback: PreviewCallback | None, frame: Any) -> None:
+    if callback is None:
+        return
+    try:
+        callback(frame)
+    except Exception:
+        pass
 
 
 def should_display(requested: bool) -> bool:

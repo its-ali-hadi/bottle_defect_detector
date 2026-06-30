@@ -1,6 +1,6 @@
 # Python AI Bottle Defect Detector
 
-Detect white bottles on a conveyor, crop one clear image per bottle, analyze the crop with Anthropic Claude, and export a final JSON report.
+Detect white bottles on a conveyor, crop one clear image per bottle, analyze the crop with Anthropic Claude, and export JSON plus Excel reports.
 
 ## Setup
 
@@ -53,6 +53,22 @@ Or explicitly:
 
 Press `q` in the preview window to stop and write the final JSON.
 
+## Run The GUI
+
+Install GUI dependencies:
+
+```bash
+.venv/bin/python -m pip install -r requirements-gui.txt
+```
+
+Start the desktop app:
+
+```bash
+.venv/bin/python run_gui.py
+```
+
+The GUI lets you refresh/select a camera, start analysis, stop the camera safely, and open the generated Excel report or result folder.
+
 ## Output
 
 Default output:
@@ -61,9 +77,13 @@ Default output:
 outputs/detections.json
 outputs/crops/bottle_0001.jpg
 outputs/crops/bottle_0002.jpg
+result/detections_YYYYMMDD_HHMMSS.xlsx
+result/detections_latest.xlsx
 ```
 
 Each JSON detection includes the bottle sequence, video timestamp, crop path, the compact defect list, and Arabic summary. The AI is asked only for `defects.type`, `defects.label_ar`, `defects.description_ar`, and `summary_ar` to reduce output tokens.
+
+After every completed detector run, Excel export runs automatically. A timestamped report is always created; `detections_latest.xlsx` is updated when it is not locked/open.
 
 ## Convert JSON To Excel
 
@@ -77,10 +97,29 @@ Default paths:
 
 ```text
 input:  outputs/detections.json
-output: result/detections.xlsx
+output: result/detections_YYYYMMDD_HHMMSS.xlsx
+latest: result/detections_latest.xlsx
 ```
 
-The workbook opens on a full Arabic report sheet with the summary at the top and bottle-by-bottle details below it. It also includes separate summary, compact detection, and defect detail sheets.
+The workbook opens on a full Arabic report sheet with the summary at the top and bottle-by-bottle details below it. It also includes `Summary` and `Bottle Details` sheets only.
+
+## Build Windows EXE
+
+Build on a Windows machine with Python installed:
+
+```bat
+build_windows.bat
+```
+
+The executable will be created at:
+
+```text
+dist\BottleDefectDetector\BottleDefectDetector.exe
+```
+
+Copy `.env.example` to `.env` inside `dist\BottleDefectDetector`, then add the real Anthropic API key. The EXE writes `outputs\` and `result\` beside itself, so the operator machine does not need Python installed.
+
+If `.env` already exists in the project when you run `build_windows.bat`, it is copied automatically into `dist\BottleDefectDetector\.env`. This makes the final folder ready to send without extra setup. Anyone who receives that folder can read/use the included API key, so share it only with trusted operators.
 
 ## Useful Options
 

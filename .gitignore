@@ -1,6 +1,16 @@
+.env.*
+!.env.example
 .venv/
+.venv-win/
 __pycache__/
 .pytest_cache/
 *.pyc
 outputs/
-
+result/
+build/
+dist/
+*.spec
+*.log
+.DS_Store
+Thumbs.db
+.~lock*.xlsx#

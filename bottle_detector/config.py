@@ -46,7 +46,7 @@ class AppConfig:
         value = str(self.source)
         if value.isdigit():
             return int(value)
-        return value
+        return str(resolve_app_path(value))
 
     @property
     def resolved_output_path(self) -> Path:
