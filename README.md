@@ -67,7 +67,7 @@ Start the desktop app:
 .venv/bin/python run_gui.py
 ```
 
-The GUI lets you refresh/select a camera, start analysis, stop the camera safely, and open the generated Excel report or result folder.
+The GUI lets you refresh/select a camera, choose a max bottle count or run unlimited until you press stop, start analysis, stop the camera safely, and open the generated Excel report or result folder.
 
 ## Output
 

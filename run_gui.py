@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -34,10 +36,11 @@ class DetectorWorker(QObject):
     finished_ok = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, source: str, stop_event: threading.Event) -> None:
+    def __init__(self, source: str, stop_event: threading.Event, max_bottles: int | None) -> None:
         super().__init__()
         self.source = source
         self.stop_event = stop_event
+        self.max_bottles = max_bottles
 
     @Slot()
     def run(self) -> None:
@@ -48,6 +51,7 @@ class DetectorWorker(QObject):
                 crops_dir=Path("outputs/crops"),
                 result_dir=Path("result"),
                 display=False,
+                max_bottles=self.max_bottles,
             )
             run_detector(
                 config,
@@ -94,6 +98,8 @@ class MainWindow(QMainWindow):
         self.last_excel_path: Path | None = None
 
         self.camera_combo = QComboBox()
+        self.max_bottles_input = QSpinBox()
+        self.unlimited_checkbox = QCheckBox("تشغيل مفتوح إلى أن أضغط إيقاف")
         self.refresh_button = QPushButton("تحديث الكاميرات")
         self.start_button = QPushButton("تشغيل الكاميرا وبدء التحليل")
         self.stop_button = QPushButton("إيقاف الكاميرا وإنهاء التحليل")
@@ -115,6 +121,17 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.camera_combo, 1)
         top_bar.addWidget(self.refresh_button)
         layout.addLayout(top_bar)
+
+        limit_bar = QHBoxLayout()
+        limit_bar.addWidget(QLabel("عدد العلب قبل الإيقاف:"))
+        self.max_bottles_input.setRange(1, 100000)
+        self.max_bottles_input.setValue(20)
+        self.max_bottles_input.setEnabled(False)
+        limit_bar.addWidget(self.max_bottles_input)
+        self.unlimited_checkbox.setChecked(True)
+        limit_bar.addWidget(self.unlimited_checkbox)
+        limit_bar.addStretch(1)
+        layout.addLayout(limit_bar)
 
         button_bar = QHBoxLayout()
         button_bar.addWidget(self.start_button)
@@ -144,6 +161,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self.refresh_button.clicked.connect(self.refresh_cameras)
+        self.unlimited_checkbox.toggled.connect(self.max_bottles_input.setDisabled)
         self.start_button.clicked.connect(self.start_analysis)
         self.stop_button.clicked.connect(self.stop_analysis)
         self.open_excel_button.clicked.connect(self.open_latest_excel)
@@ -167,9 +185,10 @@ class MainWindow(QMainWindow):
             return
 
         source = self.camera_combo.currentData() or "0"
+        max_bottles = None if self.unlimited_checkbox.isChecked() else self.max_bottles_input.value()
         self.stop_event = threading.Event()
         self.thread = QThread()
-        self.worker = DetectorWorker(str(source), self.stop_event)
+        self.worker = DetectorWorker(str(source), self.stop_event, max_bottles)
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.run)
@@ -183,9 +202,14 @@ class MainWindow(QMainWindow):
 
         self.start_button.setEnabled(False)
         self.refresh_button.setEnabled(False)
+        self.max_bottles_input.setEnabled(False)
+        self.unlimited_checkbox.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.open_excel_button.setEnabled(False)
-        self.status_label.setText("جاري تشغيل الكاميرا...")
+        if max_bottles is None:
+            self.status_label.setText("جاري تشغيل الكاميرا بدون حد للعلب...")
+        else:
+            self.status_label.setText(f"جاري تشغيل الكاميرا إلى حد {max_bottles} علبة...")
         self.thread.start()
 
     @Slot()
@@ -234,6 +258,8 @@ class MainWindow(QMainWindow):
         self.stop_event = None
         self.start_button.setEnabled(True)
         self.refresh_button.setEnabled(True)
+        self.unlimited_checkbox.setEnabled(True)
+        self.max_bottles_input.setEnabled(not self.unlimited_checkbox.isChecked())
         self.stop_button.setEnabled(False)
 
     @Slot()
@@ -270,4 +296,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
