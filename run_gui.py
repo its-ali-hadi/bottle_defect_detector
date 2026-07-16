@@ -10,14 +10,18 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -96,13 +100,26 @@ class MainWindow(QMainWindow):
         self.thread: QThread | None = None
         self.worker: DetectorWorker | None = None
         self.last_excel_path: Path | None = None
+        self.video_path: Path | None = None
+
+        self.camera_radio = QRadioButton("كاميرا")
+        self.video_radio = QRadioButton("ملف فيديو")
+        self.source_mode_group = QButtonGroup(self)
+        self.source_mode_group.addButton(self.camera_radio)
+        self.source_mode_group.addButton(self.video_radio)
+        self.camera_radio.setChecked(True)
 
         self.camera_combo = QComboBox()
+        self.refresh_button = QPushButton("تحديث الكاميرات")
+        self.video_path_input = QLineEdit()
+        self.video_path_input.setReadOnly(True)
+        self.video_path_input.setPlaceholderText("لم يتم اختيار ملف فيديو")
+        self.browse_video_button = QPushButton("اختيار فيديو...")
+
         self.max_bottles_input = QSpinBox()
         self.unlimited_checkbox = QCheckBox("تشغيل مفتوح إلى أن أضغط إيقاف")
-        self.refresh_button = QPushButton("تحديث الكاميرات")
-        self.start_button = QPushButton("تشغيل الكاميرا وبدء التحليل")
-        self.stop_button = QPushButton("إيقاف الكاميرا وإنهاء التحليل")
+        self.start_button = QPushButton("تشغيل التحليل")
+        self.stop_button = QPushButton("إيقاف التحليل")
         self.open_excel_button = QPushButton("فتح ملف Excel")
         self.open_folder_button = QPushButton("فتح مجلد النتائج")
         self.status_label = QLabel("اختر الكاميرا ثم اضغط تشغيل.")
@@ -116,11 +133,24 @@ class MainWindow(QMainWindow):
         root = QWidget()
         layout = QVBoxLayout(root)
 
+        mode_bar = QHBoxLayout()
+        mode_bar.addWidget(QLabel("مصدر الفيديو:"))
+        mode_bar.addWidget(self.camera_radio)
+        mode_bar.addWidget(self.video_radio)
+        mode_bar.addStretch(1)
+        layout.addLayout(mode_bar)
+
         top_bar = QHBoxLayout()
         top_bar.addWidget(QLabel("الكاميرا:"))
         top_bar.addWidget(self.camera_combo, 1)
         top_bar.addWidget(self.refresh_button)
         layout.addLayout(top_bar)
+
+        video_bar = QHBoxLayout()
+        video_bar.addWidget(QLabel("ملف الفيديو:"))
+        video_bar.addWidget(self.video_path_input, 1)
+        video_bar.addWidget(self.browse_video_button)
+        layout.addLayout(video_bar)
 
         limit_bar = QHBoxLayout()
         limit_bar.addWidget(QLabel("عدد العلب قبل الإيقاف:"))
@@ -157,15 +187,40 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.open_excel_button.setEnabled(False)
         self.open_folder_button.setEnabled(True)
+        self._update_source_mode()
         self.setCentralWidget(root)
 
     def _connect_signals(self) -> None:
         self.refresh_button.clicked.connect(self.refresh_cameras)
+        self.camera_radio.toggled.connect(self._update_source_mode)
+        self.browse_video_button.clicked.connect(self.choose_video_file)
         self.unlimited_checkbox.toggled.connect(self.max_bottles_input.setDisabled)
         self.start_button.clicked.connect(self.start_analysis)
         self.stop_button.clicked.connect(self.stop_analysis)
         self.open_excel_button.clicked.connect(self.open_latest_excel)
         self.open_folder_button.clicked.connect(self.open_result_folder)
+
+    @Slot()
+    def _update_source_mode(self) -> None:
+        is_camera_mode = self.camera_radio.isChecked()
+        self.camera_combo.setEnabled(is_camera_mode)
+        self.refresh_button.setEnabled(is_camera_mode)
+        self.video_path_input.setEnabled(not is_camera_mode)
+        self.browse_video_button.setEnabled(not is_camera_mode)
+
+    @Slot()
+    def choose_video_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "اختيار ملف فيديو",
+            str(Path.home()),
+            "Video Files (*.mp4 *.avi *.mov *.mkv *.wmv);;All Files (*)",
+        )
+        if not path:
+            return
+        self.video_path = Path(path)
+        self.video_path_input.setText(str(self.video_path))
+        self.video_radio.setChecked(True)
 
     @Slot()
     def refresh_cameras(self) -> None:
@@ -184,11 +239,18 @@ class MainWindow(QMainWindow):
         if self.thread is not None:
             return
 
-        source = self.camera_combo.currentData() or "0"
+        if self.video_radio.isChecked():
+            if self.video_path is None or not self.video_path.exists():
+                QMessageBox.warning(self, "ملف فيديو", "الرجاء اختيار ملف فيديو صالح أولاً.")
+                return
+            source = str(self.video_path)
+        else:
+            source = str(self.camera_combo.currentData() or "0")
+
         max_bottles = None if self.unlimited_checkbox.isChecked() else self.max_bottles_input.value()
         self.stop_event = threading.Event()
         self.thread = QThread()
-        self.worker = DetectorWorker(str(source), self.stop_event, max_bottles)
+        self.worker = DetectorWorker(source, self.stop_event, max_bottles)
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.run)
@@ -201,15 +263,18 @@ class MainWindow(QMainWindow):
         self.thread.finished.connect(self.cleanup_thread)
 
         self.start_button.setEnabled(False)
+        self.camera_radio.setEnabled(False)
+        self.video_radio.setEnabled(False)
         self.refresh_button.setEnabled(False)
+        self.browse_video_button.setEnabled(False)
         self.max_bottles_input.setEnabled(False)
         self.unlimited_checkbox.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.open_excel_button.setEnabled(False)
         if max_bottles is None:
-            self.status_label.setText("جاري تشغيل الكاميرا بدون حد للعلب...")
+            self.status_label.setText("جاري التشغيل بدون حد للعلب...")
         else:
-            self.status_label.setText(f"جاري تشغيل الكاميرا إلى حد {max_bottles} علبة...")
+            self.status_label.setText(f"جاري التشغيل إلى حد {max_bottles} علبة...")
         self.thread.start()
 
     @Slot()
@@ -257,7 +322,9 @@ class MainWindow(QMainWindow):
         self.thread = None
         self.stop_event = None
         self.start_button.setEnabled(True)
-        self.refresh_button.setEnabled(True)
+        self.camera_radio.setEnabled(True)
+        self.video_radio.setEnabled(True)
+        self._update_source_mode()
         self.unlimited_checkbox.setEnabled(True)
         self.max_bottles_input.setEnabled(not self.unlimited_checkbox.isChecked())
         self.stop_button.setEnabled(False)

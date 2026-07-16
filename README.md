@@ -14,7 +14,7 @@ The app reads the Anthropic key from `.env`. It supports both names:
 ```env
 anthropic_api_key=...
 ANTHROPIC_API_KEY=...
-ANTHROPIC_MODEL=claude-sonnet-4-6
+ANTHROPIC_MODEL=claude-sonnet-5
 ```
 
 ## Run With The Test Video
@@ -81,7 +81,14 @@ result/detections_YYYYMMDD_HHMMSS.xlsx
 result/detections_latest.xlsx
 ```
 
-Each JSON detection includes the bottle sequence, video timestamp, crop path, the compact defect list, and Arabic summary. The AI is asked only for `defects.type`, `defects.label_ar`, `defects.description_ar`, and `summary_ar` to reduce output tokens.
+Each JSON detection includes the bottle sequence, video timestamp, crop path, the compact defect list, Arabic summary, and a confidence score. The AI is asked only for `defects.type`, `defects.description_ar`, `summary_ar`, and `confidence` (Arabic labels are filled in locally) to keep output tokens minimal. Three defect categories are inspected — this line manufactures bottles without caps, so cap defects are never inspected:
+- `body_defect`: dents, scratches, cracks, or a warped/crushed neck-opening ring — moderate, localized flaws.
+- `dirty`: any visible mud/dirt staining, flagged at any size down to a single small spot, distinguished from lighting shadows by color tone/edge shape.
+- `factory_defect`: a large, prominent, unmistakable manufacturing malformation (e.g. a big lump of excess plastic) that dominates the bottle's shape at a glance — reserved for gross structural flaws, not small/moderate ones (those stay `body_defect`).
+
+Every analysis call also sends a few reference photos from `assets/reference_bottles/` alongside the target crop, so Claude has a real visual anchor for what this bottle model's defects look like instead of judging from a text description alone: `clean_ok.jpg` (a known-good bottle), `dent_defect_1.jpg`/`dent_defect_2.jpg` and `body_defect.jpg` (confirmed `body_defect` examples — body dents and a neck-opening warp respectively), `dirty_1.jpg`–`dirty_4.jpg` (`dirty` examples), and `factorial_damage.jpg` (a confirmed `factory_defect` example). If a defect type is being missed or a normal design feature is being flagged as a defect, add/replace the images in that folder with clearer examples — no code changes needed, `ai.py` picks up any file present under those names automatically.
+
+Each detection also carries `accuracy_pct`, `precision_pct`, and `recall_pct`, derived from the AI's own confidence score (there's no manual ground-truth inspection in this pipeline, so these are a confidence-based proxy, not statistically rigorous metrics): `accuracy_pct` reflects confidence in the overall verdict, `precision_pct` is set when a defect was flagged, and `recall_pct` is set when the bottle was verdict-clean. The JSON's top-level `statistics` object aggregates these same proxies across the whole run (`accuracy_pct` averaged over all bottles, `precision_pct` over defective bottles only, `recall_pct` over clean bottles only), and the Excel report surfaces both the per-bottle and run-level numbers.
 
 After every completed detector run, Excel export runs automatically. A timestamped report is always created; `detections_latest.xlsx` is updated when it is not locked/open.
 
@@ -101,7 +108,7 @@ output: result/detections_YYYYMMDD_HHMMSS.xlsx
 latest: result/detections_latest.xlsx
 ```
 
-The workbook opens on a full Arabic report sheet with the summary at the top and bottle-by-bottle details below it. It also includes `Summary` and `Bottle Details` sheets only.
+The workbook opens on a full Arabic report sheet with the summary at the top and bottle-by-bottle details below it. It also includes `Summary` and `Bottle Details` sheets only. Both the `Report` and `Bottle Details` sheets embed a thumbnail of the bottle's crop image next to its analysis in the last column, resolved from each detection's `crop_path`; if the crop file is missing, the cell shows "لا توجد صورة" instead.
 
 ## Build Windows EXE
 

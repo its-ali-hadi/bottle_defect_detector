@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import DetectionResult, RunOutput
+from .models import DetectionResult, RunOutput, compute_run_statistics
 
 
 def write_run_output(
@@ -14,11 +14,13 @@ def write_run_output(
     output_path: Path,
     detections: list[DetectionResult],
 ) -> RunOutput:
+    sorted_detections = sorted(detections, key=lambda item: item.sequence)
     output = RunOutput(
         source=source,
         model=model,
         created_at=datetime.now(timezone.utc).isoformat(),
-        detections=sorted(detections, key=lambda item: item.sequence),
+        statistics=compute_run_statistics(sorted_detections),
+        detections=sorted_detections,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(

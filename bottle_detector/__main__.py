@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default=None,
-        help="Anthropic model override. Defaults to ANTHROPIC_MODEL or claude-sonnet-4-6.",
+        help="Anthropic model override. Defaults to ANTHROPIC_MODEL or claude-sonnet-5.",
     )
     parser.add_argument(
         "--no-ai",

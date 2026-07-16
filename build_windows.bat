@@ -19,6 +19,11 @@ call .venv-win\Scripts\pyinstaller ^
   run_gui.py
 
 if exist "dist\BottleDefectDetector" (
+  if exist "assets\reference_bottles" (
+    mkdir "dist\BottleDefectDetector\assets\reference_bottles" >nul 2>nul
+    copy /Y "assets\reference_bottles\*.jpg" "dist\BottleDefectDetector\assets\reference_bottles\" >nul
+    echo Copied AI reference bottle images into dist\BottleDefectDetector\assets\reference_bottles
+  )
   copy /Y ".env.example" "dist\BottleDefectDetector\.env.example" >nul
   if exist ".env" (
     copy /Y ".env" "dist\BottleDefectDetector\.env" >nul

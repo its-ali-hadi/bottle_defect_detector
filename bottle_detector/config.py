@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from .paths import resolve_app_path
 
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-sonnet-5"
 
 
 @dataclass(frozen=True)
