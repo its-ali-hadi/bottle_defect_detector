@@ -9,8 +9,12 @@ from typing import Any
 import cv2
 
 from .config import AppConfig
-from .models import DetectionResult, Defect, normalize_detection_payload
+from .log_config import get_logger
+from .models import DetectionResult, Defect, LABELS_AR, normalize_detection_payload
 from .paths import resolve_app_path
+from .yolo_classifier import YoloCleanClassifier
+
+logger = get_logger(__name__)
 
 
 REFERENCE_DIR = "assets/reference_bottles"
@@ -142,7 +146,13 @@ class AnthropicBottleAnalyzer(AnalyzerProtocol):
                 "Missing Anthropic API key. Add anthropic_api_key=... or ANTHROPIC_API_KEY=... to .env."
             )
 
-        self.client = Anthropic(api_key=api_key)
+        # The SDK already retries transient errors (connection issues, timeouts,
+        # 429/5xx) on its own with backoff -- max_retries=2 by default. Bumped
+        # higher here because on a real production line a bottle that fails
+        # analysis becomes a permanent "couldn't analyze" placeholder (see the
+        # except block below), so it's worth spending a few extra seconds
+        # riding out a flaky connection rather than giving up early.
+        self.client = Anthropic(api_key=api_key, max_retries=5, timeout=60.0)
         self.model = config.model_name
         self.reference_blocks = build_reference_content_blocks()
 
@@ -182,6 +192,7 @@ class AnthropicBottleAnalyzer(AnalyzerProtocol):
                 confidence=normalized.confidence,
             )
         except Exception as exc:  # Keep conveyor runs alive even when one AI call fails.
+            logger.error("Claude analysis failed for bottle #%d (frame %d): %s", sequence, frame_index, exc)
             return DetectionResult(
                 sequence=sequence,
                 frame_index=frame_index,
@@ -190,13 +201,60 @@ class AnthropicBottleAnalyzer(AnalyzerProtocol):
                 defects=[
                     Defect(
                         type="body_defect",
-                        label_ar="زرف او عيب في العلبة",
+                        label_ar=LABELS_AR["body_defect"],
                         description_ar=f"تعذر تحليل الصورة بالذكاء الاصطناعي: {exc}",
                     )
                 ],
                 summary_ar="تعذر إكمال تحليل الذكاء الاصطناعي لهذه العلبة.",
                 confidence=0.0,
             )
+
+
+class YoloThenClaudeAnalyzer(AnalyzerProtocol):
+    """Binary YOLO pre-filter first; only forwards uncertain/defective bottles to Claude.
+
+    Clean bottles that YOLO is confident about (see YoloCleanClassifier) skip the
+    Claude call entirely, saving cost and latency. Anything YOLO flags as defective,
+    or isn't confident is clean, gets the exact same full Claude diagnosis as
+    AnthropicBottleAnalyzer would give it on its own.
+    """
+
+    def __init__(self, config: AppConfig) -> None:
+        self.yolo = YoloCleanClassifier(
+            model_path=config.resolved_yolo_model_path,
+            clean_confidence_threshold=config.yolo_clean_confidence_threshold,
+        )
+        self.claude = AnthropicBottleAnalyzer(config)
+        self.model = f"yolo-prefilter+{self.claude.model}"
+
+    def analyze(
+        self,
+        *,
+        sequence: int,
+        frame_index: int,
+        timestamp_sec: float,
+        crop_path: Path,
+        crop_bgr: Any,
+    ) -> DetectionResult:
+        verdict = self.yolo.predict(crop_bgr)
+        if verdict.is_clean:
+            return DetectionResult(
+                sequence=sequence,
+                frame_index=frame_index,
+                timestamp_sec=timestamp_sec,
+                crop_path=str(crop_path),
+                defects=[],
+                summary_ar="تم التحقق من سلامة العلبة عبر الفحص الأولي السريع (YOLO)، دون الحاجة لتحليل Claude الكامل.",
+                confidence=verdict.confidence,
+                analysis_stage="yolo",
+            )
+        return self.claude.analyze(
+            sequence=sequence,
+            frame_index=frame_index,
+            timestamp_sec=timestamp_sec,
+            crop_path=crop_path,
+            crop_bgr=crop_bgr,
+        )
 
 
 def encode_jpeg_base64(image_bgr: Any) -> str:

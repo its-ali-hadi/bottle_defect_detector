@@ -89,6 +89,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.92,
         help="Right edge of capture zone as a fraction of frame width.",
     )
+    parser.add_argument(
+        "--use-yolo-prefilter",
+        action="store_true",
+        help=(
+            "Screen bottles with a trained YOLOv8 binary classifier before Claude; "
+            "confidently-clean bottles skip Claude entirely. Requires a trained model "
+            "(see the Phase 2 training script) — fails fast if none is found."
+        ),
+    )
+    parser.add_argument(
+        "--yolo-model-path",
+        default="models/yolo_bottle_classifier.pt",
+        help="Path to the trained YOLO classification model (.pt). Only used with --use-yolo-prefilter.",
+    )
+    parser.add_argument(
+        "--yolo-confidence",
+        type=float,
+        default=0.90,
+        help="Minimum confidence for YOLO to mark a bottle clean without forwarding to Claude.",
+    )
     return parser
 
 
@@ -109,6 +129,9 @@ def main() -> int:
         min_area_ratio=args.min_area_ratio,
         capture_start=args.capture_start,
         capture_end=args.capture_end,
+        use_yolo_prefilter=args.use_yolo_prefilter,
+        yolo_model_path=Path(args.yolo_model_path),
+        yolo_clean_confidence_threshold=args.yolo_confidence,
     )
     run_detector(config)
     return 0

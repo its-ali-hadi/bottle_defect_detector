@@ -16,6 +16,7 @@ call .venv-win\Scripts\pyinstaller ^
   --windowed ^
   --name BottleDefectDetector ^
   --collect-all PySide6 ^
+  --collect-all ultralytics ^
   run_gui.py
 
 if exist "dist\BottleDefectDetector" (
@@ -23,6 +24,13 @@ if exist "dist\BottleDefectDetector" (
     mkdir "dist\BottleDefectDetector\assets\reference_bottles" >nul 2>nul
     copy /Y "assets\reference_bottles\*.jpg" "dist\BottleDefectDetector\assets\reference_bottles\" >nul
     echo Copied AI reference bottle images into dist\BottleDefectDetector\assets\reference_bottles
+  )
+  if exist "models\yolo_bottle_classifier.pt" (
+    mkdir "dist\BottleDefectDetector\models" >nul 2>nul
+    copy /Y "models\yolo_bottle_classifier.pt" "dist\BottleDefectDetector\models\" >nul
+    echo Copied trained YOLO pre-filter model into dist\BottleDefectDetector\models
+  ) else (
+    echo No models\yolo_bottle_classifier.pt found - --use-yolo-prefilter will not work in this build until one is trained and the build is re-run.
   )
   copy /Y ".env.example" "dist\BottleDefectDetector\.env.example" >nul
   if exist ".env" (

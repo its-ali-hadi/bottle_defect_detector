@@ -9,9 +9,9 @@ DefectType = Literal["body_defect", "dirty", "factory_defect"]
 
 
 LABELS_AR: dict[str, str] = {
-    "body_defect": "زرف او عيب في العلبة",
-    "dirty": "العلبة متسخة بالطين او التراب",
-    "factory_defect": "عيب تصنيعي واضح وكبير في شكل العلبة",
+    "body_defect": "ثقوب",
+    "dirty": "اوساخ",
+    "factory_defect": "عيوب شكلية",
 }
 
 

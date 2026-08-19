@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,12 +12,23 @@ import cv2
 
 from json_to_excel import export_excel_report
 
-from .ai import AnalyzerProtocol, AnthropicBottleAnalyzer, NoAiAnalyzer
+from .ai import AnalyzerProtocol, AnthropicBottleAnalyzer, NoAiAnalyzer, YoloThenClaudeAnalyzer
 from .cameras import open_camera
 from .config import AppConfig
 from .exporter import write_run_output
+from .log_config import get_logger
 from .models import DetectionResult
 from .tracking import BottleDetector, BottleTracker, Track, crop_with_padding
+
+logger = get_logger(__name__)
+
+# A live camera can drop a frame read transiently (USB hiccup, driver glitch,
+# momentary bandwidth stall) without the feed actually being gone -- unlike a
+# video file, where a failed read reliably means end-of-file. Retrying a bounded
+# number of times before giving up avoids ending an entire production run over
+# one bad frame. At a typical 15-30fps this window is a few seconds.
+CAMERA_READ_MAX_CONSECUTIVE_FAILURES = 30
+CAMERA_READ_RETRY_DELAY_SEC = 0.1
 
 
 @dataclass
@@ -52,7 +64,12 @@ def run_detector(
     )
 
     analyzer: AnalyzerProtocol
-    analyzer = AnthropicBottleAnalyzer(config) if config.use_ai else NoAiAnalyzer()
+    if not config.use_ai:
+        analyzer = NoAiAnalyzer()
+    elif config.use_yolo_prefilter:
+        analyzer = YoloThenClaudeAnalyzer(config)
+    else:
+        analyzer = AnthropicBottleAnalyzer(config)
 
     parsed_source = config.parsed_source
     capture = open_camera(parsed_source) if isinstance(parsed_source, int) else cv2.VideoCapture(parsed_source)
@@ -82,9 +99,11 @@ def run_detector(
     fps = capture.get(cv2.CAP_PROP_FPS) or 0.0
     executor = ThreadPoolExecutor(max_workers=1)
     stop_requested = False
+    is_live_camera = isinstance(parsed_source, int)
 
     try:
         frame_index = 0
+        consecutive_read_failures = 0
         while True:
             if stop_event is not None and stop_event.is_set():
                 stop_requested = True
@@ -92,7 +111,20 @@ def run_detector(
 
             ok, frame = capture.read()
             if not ok:
+                if is_live_camera and consecutive_read_failures < CAMERA_READ_MAX_CONSECUTIVE_FAILURES:
+                    consecutive_read_failures += 1
+                    if consecutive_read_failures == 1:
+                        logger.warning("Camera frame read failed; retrying (source=%s).", config.source)
+                    time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+                    continue
+                if is_live_camera:
+                    logger.error(
+                        "Camera frame read failed %d times in a row; stopping run (source=%s).",
+                        consecutive_read_failures,
+                        config.source,
+                    )
                 break
+            consecutive_read_failures = 0
             frame_index += 1
 
             if config.frame_limit and frame_index > config.frame_limit:
@@ -167,7 +199,7 @@ def run_detector(
                 break
 
         if stop_requested:
-            print("Stop requested; waiting for pending AI analysis before writing JSON.")
+            logger.info("Stop requested; waiting for pending AI analysis before writing JSON.")
 
         wait_for_pending(pending, detections, tracker)
         output = write_run_output(
@@ -185,9 +217,12 @@ def run_detector(
             report_path=str(excel_result["report_path"]),
             latest_path=str(excel_result["latest_path"]) if excel_result["latest_path"] else None,
         )
-        print(
-            f"Wrote {len(output.detections)} detections to {output_path}, "
-            f"crops to {crops_dir}, and Excel to {excel_result['report_path']}"
+        logger.info(
+            "Wrote %d detections to %s, crops to %s, and Excel to %s",
+            len(output.detections),
+            output_path,
+            crops_dir,
+            excel_result["report_path"],
         )
         return output.detections
     finally:
@@ -219,7 +254,7 @@ def should_display(requested: bool) -> bool:
     if not requested:
         return False
     if os.name != "nt" and not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        print("No display server detected; running without OpenCV preview window.")
+        logger.info("No display server detected; running without OpenCV preview window.")
         return False
     return True
 

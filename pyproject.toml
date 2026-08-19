@@ -10,6 +10,7 @@ dependencies = [
   "Pillow>=10.0.0",
   "pydantic>=2.8.0",
   "python-dotenv>=1.0.1",
+  "ultralytics>=8.0.0",
 ]
 
 [project.optional-dependencies]

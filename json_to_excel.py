@@ -16,6 +16,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from PIL import Image as PILImage
 
+from bottle_detector.models import LABELS_AR
+
 
 DEFAULT_INPUT = Path("outputs/detections.json")
 DEFAULT_OUTPUT_DIR = Path("result")
@@ -372,12 +374,7 @@ def format_defects_for_bottle(defects: list[dict[str, Any]]) -> str:
 
 
 def defect_type_ar(defect_type: Any) -> str:
-    values = {
-        "body_defect": "زرف او عيب في العلبة",
-        "dirty": "العلبة متسخة بالطين او التراب",
-        "factory_defect": "عيب تصنيعي واضح وكبير في شكل العلبة",
-    }
-    return values.get(str(defect_type), str(defect_type))
+    return LABELS_AR.get(str(defect_type), str(defect_type))
 
 
 if __name__ == "__main__":

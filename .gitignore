@@ -7,10 +7,14 @@ __pycache__/
 *.pyc
 outputs/
 result/
+*.pt
+training_data/
+training_runs/
 build/
 dist/
 *.spec
 *.log
+logs/
 .DS_Store
 Thumbs.db
 .~lock*.xlsx#

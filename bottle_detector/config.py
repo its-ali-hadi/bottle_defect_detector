@@ -28,6 +28,9 @@ class AppConfig:
     min_area_ratio: float = 0.012
     capture_start: float = 0.08
     capture_end: float = 0.92
+    use_yolo_prefilter: bool = False
+    yolo_model_path: Path = Path("models/yolo_bottle_classifier.pt")
+    yolo_clean_confidence_threshold: float = 0.90
 
     def __post_init__(self) -> None:
         load_dotenv(resolve_app_path(".env"))
@@ -59,3 +62,7 @@ class AppConfig:
     @property
     def resolved_result_dir(self) -> Path:
         return resolve_app_path(self.result_dir)
+
+    @property
+    def resolved_yolo_model_path(self) -> Path:
+        return resolve_app_path(self.yolo_model_path)

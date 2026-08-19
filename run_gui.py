@@ -40,11 +40,18 @@ class DetectorWorker(QObject):
     finished_ok = Signal(dict)
     failed = Signal(str)
 
-    def __init__(self, source: str, stop_event: threading.Event, max_bottles: int | None) -> None:
+    def __init__(
+        self,
+        source: str,
+        stop_event: threading.Event,
+        max_bottles: int | None,
+        use_yolo_prefilter: bool = False,
+    ) -> None:
         super().__init__()
         self.source = source
         self.stop_event = stop_event
         self.max_bottles = max_bottles
+        self.use_yolo_prefilter = use_yolo_prefilter
 
     @Slot()
     def run(self) -> None:
@@ -56,6 +63,7 @@ class DetectorWorker(QObject):
                 result_dir=Path("result"),
                 display=False,
                 max_bottles=self.max_bottles,
+                use_yolo_prefilter=self.use_yolo_prefilter,
             )
             run_detector(
                 config,
@@ -118,6 +126,7 @@ class MainWindow(QMainWindow):
 
         self.max_bottles_input = QSpinBox()
         self.unlimited_checkbox = QCheckBox("تشغيل مفتوح إلى أن أضغط إيقاف")
+        self.yolo_prefilter_checkbox = QCheckBox("استخدام YOLO للفحص الأولي (يتطلب موديل مدرّب)")
         self.start_button = QPushButton("تشغيل التحليل")
         self.stop_button = QPushButton("إيقاف التحليل")
         self.open_excel_button = QPushButton("فتح ملف Excel")
@@ -162,6 +171,11 @@ class MainWindow(QMainWindow):
         limit_bar.addWidget(self.unlimited_checkbox)
         limit_bar.addStretch(1)
         layout.addLayout(limit_bar)
+
+        yolo_bar = QHBoxLayout()
+        yolo_bar.addWidget(self.yolo_prefilter_checkbox)
+        yolo_bar.addStretch(1)
+        layout.addLayout(yolo_bar)
 
         button_bar = QHBoxLayout()
         button_bar.addWidget(self.start_button)
@@ -250,7 +264,12 @@ class MainWindow(QMainWindow):
         max_bottles = None if self.unlimited_checkbox.isChecked() else self.max_bottles_input.value()
         self.stop_event = threading.Event()
         self.thread = QThread()
-        self.worker = DetectorWorker(source, self.stop_event, max_bottles)
+        self.worker = DetectorWorker(
+            source,
+            self.stop_event,
+            max_bottles,
+            use_yolo_prefilter=self.yolo_prefilter_checkbox.isChecked(),
+        )
         self.worker.moveToThread(self.thread)
 
         self.thread.started.connect(self.worker.run)
@@ -269,6 +288,7 @@ class MainWindow(QMainWindow):
         self.browse_video_button.setEnabled(False)
         self.max_bottles_input.setEnabled(False)
         self.unlimited_checkbox.setEnabled(False)
+        self.yolo_prefilter_checkbox.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.open_excel_button.setEnabled(False)
         if max_bottles is None:
@@ -327,6 +347,7 @@ class MainWindow(QMainWindow):
         self._update_source_mode()
         self.unlimited_checkbox.setEnabled(True)
         self.max_bottles_input.setEnabled(not self.unlimited_checkbox.isChecked())
+        self.yolo_prefilter_checkbox.setEnabled(True)
         self.stop_button.setEnabled(False)
 
     @Slot()
